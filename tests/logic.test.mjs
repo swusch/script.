@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRequestBody, parseGeminiResponse, normalizeResult, errorFromHttp,
-  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError, cleanQuelle, supportsThinkingLevel,
+  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError, cleanQuelle,
+  createSseParser, mergeStreamChunks,
 } from '../logic.js';
 
 const wrap = (obj, finishReason = 'STOP') => ({
@@ -45,16 +46,37 @@ test('buildRequestBody hängt Bilder in Reihenfolge nach dem Prompt an', () => {
   assert.throws(() => buildRequestBody('quatsch', []));
 });
 
-test('Keine niedrige Temperatur, Antwortlimit gesetzt, wenig Denkzeit nur bei passenden Modellen', () => {
-  const img = [{ mimeType: 'image/jpeg', data: 'AAA' }];
-  const cfg = (opts) => buildRequestBody('lernskript', img, opts).generationConfig;
-  assert.equal(cfg({ model: 'gemini-flash-latest' }).temperature, undefined);
-  assert.ok(cfg({ model: 'gemini-flash-latest' }).maxOutputTokens > 0);
-  assert.deepEqual(cfg({ model: 'gemini-flash-latest' }).thinkingConfig, { thinkingLevel: 'low' });
-  assert.deepEqual(cfg({ model: 'gemini-3.5-flash' }).thinkingConfig, { thinkingLevel: 'low' });
-  assert.equal(cfg({ model: 'gemini-2.5-flash' }).thinkingConfig, undefined);
-  assert.equal(cfg({ model: 'gemini-flash-latest', thinking: false }).thinkingConfig, undefined);
-  assert.equal(supportsThinkingLevel('models/gemini-1.5-pro'), false);
+test('Keine Temperatur und keine Denkzeit-Einstellung, aber Antwortlimit', () => {
+  const cfg = buildRequestBody('lernskript', [{ mimeType: 'image/jpeg', data: 'AAA' }]).generationConfig;
+  assert.equal(cfg.temperature, undefined);
+  assert.equal(cfg.thinkingConfig, undefined);
+  assert.ok(cfg.maxOutputTokens > 0);
+});
+
+test('SSE-Parser: Ereignisse über Stückgrenzen, CRLF, Rest beim flush', () => {
+  const p = createSseParser();
+  const ev1 = JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"tit' }] } }] });
+  const ev2 = JSON.stringify({ candidates: [{ content: { parts: [{ text: 'el":"x"}' }] }, finishReason: 'STOP' }] });
+  const stream = `data: ${ev1}\r\n\r\ndata: ${ev2}`;
+  const a = p.push(stream.slice(0, 15));
+  const b = p.push(stream.slice(15));
+  assert.equal(a.length + b.length, 1);
+  const c = p.flush();
+  assert.equal(c.length, 1);
+  assert.equal(p.push('data: kaputt\n\n').length, 0); // ungültiges JSON wird übersprungen
+});
+
+test('Stream-Teile werden zur normalen Antwort zusammengesetzt (Gedanken ausgelassen)', () => {
+  const merged = mergeStreamChunks([
+    { candidates: [{ content: { parts: [{ text: 'geheim', thought: true }] } }] },
+    { candidates: [{ content: { parts: [{ text: JSON.stringify(lernskript).slice(0, 20) }] } }] },
+    { candidates: [{ content: { parts: [{ text: JSON.stringify(lernskript).slice(20) }] }, finishReason: 'STOP' }] },
+  ]);
+  assert.equal(merged.candidates[0].finishReason, 'STOP');
+  const r = parseGeminiResponse('lernskript', merged);
+  assert.equal(r.titel, 'Photosynthese');
+  assert.throws(() => parseGeminiResponse('lernskript', mergeStreamChunks([{ promptFeedback: { blockReason: 'SAFETY' } }])),
+    (e) => e.code === 'blocked');
 });
 
 test('Buchtitel wird als eigener Hinweis vor den Bildern mitgeschickt', () => {
@@ -116,6 +138,10 @@ test('HTTP-Fehler werden richtig zugeordnet', () => {
   assert.equal(errorFromHttp(400, badKey).code, 'bad_key');
   assert.equal(errorFromHttp(403).code, 'bad_key');
   assert.equal(errorFromHttp(404).code, 'bad_model');
+  const notFound = JSON.stringify([{ error: { message: 'models/gemini-x is not found for API version v1beta' } }]);
+  assert.equal(errorFromHttp(400, notFound).code, 'bad_model'); // Stream-Fehler als Array
+  const otherModelMsg = JSON.stringify({ error: { message: 'Thinking level is not supported for this model.' } });
+  assert.equal(errorFromHttp(400, otherModelMsg).code, 'http'); // nicht fälschlich "Modell gibt es nicht"
   assert.equal(errorFromHttp(429).code, 'rate_limit');
   assert.equal(errorFromHttp(503).code, 'server');
   assert.equal(errorFromHttp(503).retryable, true);

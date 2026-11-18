@@ -42,7 +42,8 @@ Unten gibt es eine Leiste mit drei Tabs: **Neu · Verlauf · Einstellungen**.
    - Die Reihenfolge lässt sich mit Pfeilen ◀ ▶ ändern. Das ist auf dem Handy zuverlässiger als Ziehen.
    - Höchstens **10 Seiten** pro Skript.
 5. **„Umwandeln"-Knopf:** Ist nur aktiv, wenn mindestens 1 Foto da ist und ein Schlüssel hinterlegt ist.
-6. Während der Umwandlung erscheint eine Ladeanzeige („Gemini liest 3 Seiten …") mit mitlaufenden Sekunden, dem Hinweis „Bitte die App geöffnet lassen" und einem **Abbrechen**-Knopf. Abbrechen behält die Fotos. Nach 2 Minuten ohne Antwort bricht die App selbst ab und erklärt, was man tun kann.
+6. Während der Umwandlung erscheint eine Ladeanzeige. Sie zeigt die aktuelle Phase („Sende 3 Fotos an Gemini …", dann „Gemini liest 3 Seiten …", dann „Gemini schreibt … 1.240 Zeichen"), die mitlaufenden Sekunden, den Hinweis „Bitte die App geöffnet lassen" und einen **Abbrechen**-Knopf. Abbrechen behält die Fotos.
+   Zeitlimits: höchstens 120 s bis zu den ersten Daten, danach höchstens 45 s Pause zwischen zwei Teilen der Antwort, insgesamt höchstens 5 Minuten. Die Fehlermeldung nennt, in welcher Phase es hing.
 
 Fehlt der Schlüssel, erscheint statt „Umwandeln" ein Hinweis mit Link zu den Einstellungen.
 
@@ -59,7 +60,7 @@ Fehlt der Schlüssel, erscheint statt „Umwandeln" ein Hinweis mit Link zu den 
 - Kommt ein 21. Skript dazu, fällt das älteste automatisch weg.
 
 ### 4.4 Einstellungen
-- Eingabefeld für den **Gemini-API-Schlüssel** (versteckt angezeigt, mit „Anzeigen"-Schalter) und ein „Testen"-Knopf, der eine kleine Anfrage schickt und ✓ oder ✗ zeigt
+- Eingabefeld für den **Gemini-API-Schlüssel** (versteckt angezeigt, mit „Anzeigen"-Schalter) und ein „Testen"-Knopf. Er schickt eine echte Mini-Anfrage („Antworte nur mit: OK") an das eingestellte Modell und prüft so Schlüssel, Modell und Gratis-Kontingent. Das Ergebnis ist ✓ mit Antwortzeit oder ✗ mit Grund. Der Test verbraucht eine Gratis-Anfrage.
 - Kurze Anleitung mit Link zu Google AI Studio, wo man den Schlüssel bekommt
 - Modellname, vorausgefüllt mit einem aktuellen Gemini-Flash-Modell, aber änderbar, falls Google Modelle umbenennt
 - Hinweis zum Datenschutz (siehe Abschnitt 9)
@@ -68,7 +69,7 @@ Fehlt der Schlüssel, erscheint statt „Umwandeln" ein Hinweis mit Link zu den 
 ## 5. Ablauf der Umwandlung
 
 1. **Bilder verkleinern** im Browser: Die längste Seite wird auf ca. 1600 px gebracht, als JPEG mit Qualität ~0,8. Das spart Datenvolumen und bleibt unter der Größengrenze von Gemini, und Text ist trotzdem gut lesbar.
-2. **Eine einzige Anfrage** an die Gemini-API, direkt vom Browser aus. Sie enthält:
+2. **Eine einzige Anfrage** an die Gemini-API, direkt vom Browser aus, über `streamGenerateContent?alt=sse`. Die Antwort kommt stückweise und wird am Ende zusammengesetzt, damit die App den Fortschritt sieht. Die Anfrage enthält:
    - alle Bilder in der gewählten Reihenfolge
    - die Anweisung für den gewählten Modus (siehe Abschnitt 7)
    - die Vorgabe, die Antwort als **JSON nach festem Schema** zu liefern, damit die App sie zuverlässig darstellen kann
@@ -169,9 +170,9 @@ In allen Fehlerfällen bleiben die Fotos erhalten, damit man nicht neu fotografi
 - Dateien: `index.html`, `app.js`, `style.css`, `manifest.webmanifest` (Name, Icon, Vollbild), `sw.js` (damit die App-Oberfläche auch schlecht verbunden schnell lädt) und Icons
 - Einzige externe Bibliothek: jsPDF (fest eingebundene Version)
 - Optik: hell und dunkel automatisch nach iPhone-Einstellung, große Tippflächen, schlichtes Design
-- **Modell:** Standard ist `gemini-flash-latest` (ein Alias, den Google immer auf das aktuelle Flash-Modell zeigen lässt). Als Ausweichmodell gibt es `gemini-flash-lite-latest`, das laut Berichten deutlich mehr Gratis-Anfragen pro Tag erlaubt. Beim Fehler 429 schlägt die App dieses Modell vor.
+- **Modell:** Standard ist `gemini-flash-lite-latest`. Das ist laut Google der schnellste Durchsatz mit minimaler Denkzeit, und laut Berichten erlaubt es mehr Gratis-Anfragen. Für Abschreiben und Gliedern reicht das. In den Einstellungen kann man `gemini-flash-latest` wählen (genauer bei Handschrift oder schlechten Fotos, aber langsamer). Wer noch das alte Standardmodell `gemini-flash-latest` gespeichert hatte, wird einmalig auf den neuen Standard umgestellt.
 - Für die API-Anfragen wird der Schlüssel im Header `x-goog-api-key` geschickt, nicht in der URL.
-- **Gemini-Einstellungen:** Die Temperatur wird nicht gesetzt, weil Google bei Gemini 3 von Werten unter 1.0 abrät (Schleifengefahr). `maxOutputTokens` ist 20.000. Bei Gemini 3+ und den `*-latest`-Aliassen gilt `thinkingConfig.thinkingLevel = "low"`, weil Abschreiben und Gliedern kaum Denkzeit braucht. Lehnt ein Modell das ab (HTTP 400 mit „thinking"), wiederholt die App die Anfrage einmal ohne diese Einstellung.
+- **Gemini-Einstellungen:** Nur `responseMimeType`, `responseSchema` und `maxOutputTokens` (20.000, damit eine Endlosschleife stoppt). Kein `temperature`, weil das seit Gemini 3.6 ignoriert wird, und kein `thinkingConfig`, weil die erlaubten Stufen vom Modell abhängen (3.6 Flash kennt nur `medium` und `high`). Es gelten also die Standardwerte des Modells.
 
 ### Projektstruktur
 ```

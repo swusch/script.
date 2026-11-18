@@ -110,7 +110,7 @@
             <li>Tippe auf <strong>„API-Schlüssel erstellen"</strong>.</li>
             <li>Kopiere den Schlüssel und füge ihn oben ein.</li>
           </ol>
-          <p class="hint">Der Schlüssel wird nur auf diesem Gerät gespeichert.</p>
+          <p class="hint">Der Schlüssel wird nur auf diesem Gerät gespeichert. „Testen" schickt eine kleine Anfrage an Gemini und verbraucht dabei eine Gratis-Anfrage.</p>
         </details>
       </div>
 
@@ -121,7 +121,7 @@
           <button type="button" class="btn btn-secondary btn-small" id="resetModel">Standard</button>
         </div>
         <datalist id="modelList"></datalist>
-        <p class="hint">Ist das Gratis-Tageslimit voll, hilft oft <code id="fallbackName"></code>. Es liest etwas ungenauer, erlaubt aber mehr Anfragen.</p>
+        <p class="hint">Standard ist <code id="defaultName"></code>: schnell und mit vielen Gratis-Anfragen. Bei Handschrift oder schlechten Fotos kann <code id="accurateName"></code> genauer lesen. Es ist aber langsamer und hat weniger Gratis-Anfragen.</p>
       </div>
 
       <div class="card">

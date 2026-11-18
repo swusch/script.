@@ -2,8 +2,10 @@
 
 export const MAX_PHOTOS = 10;
 export const MAX_HISTORY = 20;
-export const DEFAULT_MODEL = 'gemini-flash-latest';
-export const FALLBACK_MODEL = 'gemini-flash-lite-latest';
+// Lite: schnellster Durchsatz, minimale Denkzeit, mehr Gratis-Anfragen – reicht zum Abschreiben/Gliedern.
+export const DEFAULT_MODEL = 'gemini-flash-lite-latest';
+// Genauer, aber langsamer und mit weniger Gratis-Anfragen (z. B. für Handschrift oder schlechte Fotos).
+export const ACCURATE_MODEL = 'gemini-flash-latest';
 export const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const COMMON_RULES = `
@@ -115,14 +117,8 @@ Nutze dein Wissen über dieses Werk nur zur Einordnung: Figuren und Sprecher ric
 // Obergrenze für die Antwort: genug für 10 Seiten, stoppt aber eine Endlosschleife.
 export const MAX_OUTPUT_TOKENS = 20000;
 
-/** Gemini 3+ (und die *-latest-Aliasse) kennen thinkingLevel, ältere Modelle nicht. */
-export function supportsThinkingLevel(model) {
-  const m = String(model || '').replace(/^models\//, '');
-  return !/^gemini-(1|2)(\.|-)/.test(m);
-}
-
 /** images: [{ mimeType, data(base64 ohne Präfix) }] */
-export function buildRequestBody(mode, images, { quelle, model, thinking = true } = {}) {
+export function buildRequestBody(mode, images, { quelle } = {}) {
   const m = MODES[mode];
   if (!m) throw new Error(`Unbekannter Modus: ${mode}`);
   const hint = quelleHint(quelle);
@@ -140,11 +136,64 @@ export function buildRequestBody(mode, images, { quelle, model, thinking = true 
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: m.schema,
-      // Keine Temperatur setzen: Google rät bei Gemini 3 von Werten unter 1.0 ab (Schleifengefahr).
+      // Keine temperature/thinkingConfig: bei Gemini 3.6 ignoriert bzw. modellabhängig erlaubt –
+      // die Standardwerte des Modells passen.
       maxOutputTokens: MAX_OUTPUT_TOKENS,
-      // Abschreiben und Gliedern braucht wenig "Nachdenken" – spart viel Zeit.
-      ...(thinking && supportsThinkingLevel(model) ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
     },
+  };
+}
+
+/**
+ * Zerlegt den SSE-Datenstrom von streamGenerateContent?alt=sse in JSON-Ereignisse.
+ * push(textStück) liefert alle vollständigen Ereignisse, flush() den Rest am Ende.
+ */
+export function createSseParser() {
+  let buf = '';
+  const parseBlock = (block) => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trimStart())
+      .join('\n');
+    if (!data || data === '[DONE]') return null;
+    try { return JSON.parse(data); } catch { return null; }
+  };
+  const take = (all) => {
+    const events = [];
+    for (;;) {
+      const m = /\r?\n\r?\n/.exec(buf);
+      if (!m) break;
+      const ev = parseBlock(buf.slice(0, m.index));
+      buf = buf.slice(m.index + m[0].length);
+      if (ev) events.push(ev);
+    }
+    if (all && buf.trim()) {
+      const ev = parseBlock(buf);
+      buf = '';
+      if (ev) events.push(ev);
+    }
+    return events;
+  };
+  return {
+    push(chunk) { buf += chunk; return take(false); },
+    flush() { return take(true); },
+  };
+}
+
+/** Fügt die Teilantworten eines Streams zu einer normalen generateContent-Antwort zusammen. */
+export function mergeStreamChunks(chunks) {
+  let text = '';
+  let finishReason;
+  let promptFeedback;
+  for (const c of chunks) {
+    if (c?.promptFeedback && !promptFeedback) promptFeedback = c.promptFeedback;
+    const cand = c?.candidates?.[0];
+    for (const p of cand?.content?.parts ?? []) if (p && !p.thought && typeof p.text === 'string') text += p.text;
+    if (cand?.finishReason) finishReason = cand.finishReason;
+  }
+  return {
+    ...(promptFeedback ? { promptFeedback } : {}),
+    candidates: [{ content: { parts: [{ text }] }, ...(finishReason ? { finishReason } : {}) }],
   };
 }
 
@@ -225,20 +274,22 @@ export function parseGeminiResponse(mode, response) {
 export function errorFromHttp(status, bodyText = '') {
   let apiMsg = '';
   try {
-    apiMsg = JSON.parse(bodyText)?.error?.message || '';
+    const j = JSON.parse(bodyText);
+    apiMsg = (Array.isArray(j) ? j[0] : j)?.error?.message || ''; // Stream-Fehler kommen als Array
   } catch { /* kein JSON */ }
   const low = apiMsg.toLowerCase();
 
   if (status === 401 || status === 403 || (status === 400 && (low.includes('api key') || low.includes('api_key')))) {
     return new AppError('bad_key', 'Der Schlüssel wird abgelehnt – bitte in den Einstellungen prüfen.');
   }
-  if (status === 404 || (status === 400 && low.includes('model'))) {
-    return new AppError('bad_model', 'Das eingestellte Modell gibt es nicht (mehr). Bitte in den Einstellungen ein anderes wählen.');
+  // Nur echte "Modell unbekannt"-Fehler – nicht jede 400er-Meldung, in der "model" vorkommt
+  if (status === 404 || (status === 400 && /models\/\S+ is not found|model not found|unknown model/.test(low))) {
+    return new AppError('bad_model', `Das eingestellte Modell gibt es nicht (mehr). In den Einstellungen auf „Standard" tippen.`);
   }
   if (status === 429) {
     return new AppError(
       'rate_limit',
-      `Gratis-Limit erreicht – bitte in einer Minute nochmal versuchen. Ist das Tageslimit voll, hilft in den Einstellungen das Modell „${FALLBACK_MODEL}".`
+      'Gratis-Limit erreicht – bitte in einer Minute nochmal versuchen. Ist das Tageslimit voll, geht es morgen wieder.'
     );
   }
   if (status === 413 || (status === 400 && (low.includes('size') || low.includes('too large')))) {

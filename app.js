@@ -1,11 +1,14 @@
 import {
-  MODES, MAX_PHOTOS, DEFAULT_MODEL, FALLBACK_MODEL, API_BASE, AppError,
+  MODES, MAX_PHOTOS, DEFAULT_MODEL, ACCURATE_MODEL, API_BASE, AppError,
   buildRequestBody, parseGeminiResponse, errorFromHttp, toPlainText,
   sanitizeForPdf, addToHistory, pdfFileName, moveItem, cleanQuelle,
+  createSseParser, mergeStreamChunks,
 } from './logic.js';
 
 const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-const REQUEST_TIMEOUT_MS = 120_000;
+const FIRST_DATA_TIMEOUT_MS = 120_000; // bis die ersten Daten kommen (Hochladen + Lesen)
+const IDLE_TIMEOUT_MS = 45_000;        // danach: maximale Pause zwischen zwei Stücken
+const TOTAL_TIMEOUT_MS = 300_000;      // absolute Obergrenze
 const MAX_EDGE_PX = 1600;
 const SPEAKER_COLORS = 8; // Anzahl der .spk-N-Klassen in style.css
 
@@ -31,6 +34,12 @@ const store = {
   },
   remove(key) { try { localStorage.removeItem('skriptor.' + key); } catch { /* egal */ } },
 };
+
+// Einmalige Umstellung: Wer noch das alte Standardmodell gespeichert hat, bekommt den neuen Standard.
+if (!store.get('modelMigrated2', false)) {
+  if (store.get('model', '') === ACCURATE_MODEL) store.remove('model');
+  store.set('modelMigrated2', true);
+}
 
 const getKey = () => String(store.get('apiKey', '') || '').trim();
 const getModel = () => String(store.get('model', '') || '').trim().replace(/^models\//, '') || DEFAULT_MODEL;
@@ -217,44 +226,91 @@ function showError(msg) {
 }
 function hideError() { $('#errorBox').hidden = true; }
 
-/* ---------- Gemini ---------- */
-let activeRequest = null; // { ctrl, cancelled }
+/* ---------- Gemini (Streaming) ---------- */
+let activeRequest = null; // { ctrl, cancelled, reason }
 
-async function callGemini(mode, photos, key, model, quelle) {
-  let thinking = true;
-  let retried = false;
-  for (;;) {
-    const body = JSON.stringify(buildRequestBody(mode, photos, { quelle, model, thinking }));
-    const req = { ctrl: new AbortController(), cancelled: false, timedOut: false };
+const LOCK_HINT = ' Lass die App währenddessen geöffnet – wenn das iPhone sperrt, bricht die Verbindung ab.';
+
+function timeoutError(reason, chars) {
+  if (reason === 'first') {
+    return new AppError('timeout_first',
+      `Gemini hat nach ${FIRST_DATA_TIMEOUT_MS / 1000} Sekunden noch nicht angefangen zu antworten. Meist ist Google gerade überlastet oder das Hochladen der Fotos dauert zu lange (schwaches Netz). Bitte nochmal versuchen.` + LOCK_HINT);
+  }
+  if (reason === 'idle') {
+    return new AppError('timeout_idle',
+      `Gemini hat nach ${chars.toLocaleString('de-DE')} Zeichen ${IDLE_TIMEOUT_MS / 1000} Sekunden lang nichts mehr geschickt. Bitte nochmal versuchen.` + LOCK_HINT);
+  }
+  return new AppError('timeout_total',
+    `Gemini war nach ${TOTAL_TIMEOUT_MS / 60000} Minuten noch nicht fertig. Bitte weniger Seiten auf einmal umwandeln.`);
+}
+
+/** Schickt die Fotos an Gemini und liest die Antwort stückweise. onProgress({ phase, chars }) */
+async function callGemini(mode, photos, key, model, quelle, onProgress = () => {}) {
+  const body = JSON.stringify(buildRequestBody(mode, photos, { quelle }));
+  for (let attempt = 0; ; attempt++) {
+    const req = { ctrl: new AbortController(), cancelled: false, reason: null };
     activeRequest = req;
-    const timer = setTimeout(() => { req.timedOut = true; req.ctrl.abort(); }, REQUEST_TIMEOUT_MS);
+    let watchdog;
+    const arm = (ms, reason) => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => { req.reason = reason; req.ctrl.abort(); }, ms);
+    };
+    const total = setTimeout(() => { req.reason = 'total'; req.ctrl.abort(); }, TOTAL_TIMEOUT_MS);
+    let chars = 0;
     try {
-      const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+      onProgress({ phase: 'senden', chars });
+      arm(FIRST_DATA_TIMEOUT_MS, 'first');
+      const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body,
         signal: req.ctrl.signal,
       });
-      if (!res.ok) {
-        const text = await res.text();
-        // Modell kennt die Denkzeit-Einstellung nicht → einmal ohne sie wiederholen
-        if (res.status === 400 && thinking && /thinking/i.test(text)) { thinking = false; continue; }
-        throw errorFromHttp(res.status, text);
+      if (!res.ok) throw errorFromHttp(res.status, await res.text());
+      onProgress({ phase: 'lesen', chars });
+
+      const parser = createSseParser();
+      const chunks = [];
+      const take = (events) => {
+        for (const ev of events) {
+          if (ev?.error) throw errorFromHttp(Number(ev.error.code) || 500, JSON.stringify(ev));
+          chunks.push(ev);
+          for (const p of ev?.candidates?.[0]?.content?.parts ?? []) if (!p.thought && p.text) chars += p.text.length;
+        }
+      };
+      if (res.body?.getReader) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let started = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          take(parser.push(decoder.decode(value, { stream: true })));
+          if (chars > 0) started = true;
+          // Erste Daten da → ab jetzt nur noch auf Stillstand achten
+          arm(started ? IDLE_TIMEOUT_MS : FIRST_DATA_TIMEOUT_MS, started ? 'idle' : 'first');
+          onProgress({ phase: started ? 'schreiben' : 'lesen', chars });
+        }
+        take(parser.push(decoder.decode()));
+      } else {
+        take(parser.push(await res.text())); // Browser ohne Streaming-Unterstützung
       }
-      return parseGeminiResponse(mode, await res.json());
+      take(parser.flush());
+      return parseGeminiResponse(mode, mergeStreamChunks(chunks));
     } catch (e) {
       let err = e;
       if (e?.name === 'AbortError') {
-        err = req.cancelled
-          ? new AppError('cancelled', 'Abgebrochen.')
-          : new AppError('timeout', `Gemini hat nach ${Math.round(REQUEST_TIMEOUT_MS / 60000)} Minuten nicht geantwortet. Versuch es nochmal, mit weniger Seiten oder in den Einstellungen mit dem Modell „${FALLBACK_MODEL}". Lass die App währenddessen geöffnet – wenn das iPhone sperrt, bricht die Verbindung ab.`);
+        err = req.cancelled ? new AppError('cancelled', 'Abgebrochen.') : timeoutError(req.reason, chars);
       } else if (!(e instanceof AppError)) {
-        err = new AppError('offline', navigator.onLine === false ? 'Keine Internetverbindung.' : 'Keine Verbindung zu Gemini. Bitte Internet prüfen und nochmal versuchen.');
+        err = new AppError('offline', navigator.onLine === false
+          ? 'Keine Internetverbindung.'
+          : 'Die Verbindung zu Gemini ist abgebrochen. Bitte Internet prüfen und nochmal versuchen.' + LOCK_HINT);
       }
-      if (err.retryable && !retried) { retried = true; continue; }
+      if (err.retryable && attempt === 0) continue;
       throw err;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(watchdog);
+      clearTimeout(total);
       if (activeRequest === req) activeRequest = null;
     }
   }
@@ -273,18 +329,21 @@ $('#convertBtn').addEventListener('click', async () => {
   state.busy = true;
   updateNewView();
   const n = state.photos.length;
-  $('#loadingText').textContent = `Gemini liest ${n === 1 ? 'die Seite' : n + ' Seiten'} …`;
-  const started = Date.now();
-  const tick = () => {
-    const s = Math.floor((Date.now() - started) / 1000);
-    $('#loadingTime').textContent = s < 20 ? `${s} s` : `${s} s – das kann bei vielen Seiten etwas dauern`;
+  const pages = n === 1 ? 'die Seite' : `${n} Seiten`;
+  const onProgress = ({ phase, chars }) => {
+    $('#loadingText').textContent =
+      phase === 'senden' ? `Sende ${n === 1 ? 'das Foto' : n + ' Fotos'} an Gemini …`
+      : phase === 'lesen' ? `Gemini liest ${pages} …`
+      : `Gemini schreibt … ${chars.toLocaleString('de-DE')} Zeichen`;
   };
+  const started = Date.now();
+  const tick = () => { $('#loadingTime').textContent = `${Math.floor((Date.now() - started) / 1000)} s`; };
   tick();
   const ticker = setInterval(tick, 1000);
   $('#loading').hidden = false;
   try {
     const quelle = cleanQuelle(quelleInput.value);
-    const result = await callGemini(state.mode, state.photos, key, getModel(), quelle);
+    const result = await callGemini(state.mode, state.photos, key, getModel(), quelle, onProgress);
     if (quelle) result.quelle = quelle;
     const entry = { id: crypto.randomUUID?.() ?? String(Date.now()), mode: state.mode, date: new Date().toISOString(), result };
     if (!store.set('history', addToHistory(store.get('history', []), entry))) {
@@ -620,8 +679,9 @@ function renderHistory() {
 /* ---------- Einstellungen ---------- */
 const keyInput = $('#apiKey');
 const modelInput = $('#model');
-$('#fallbackName').textContent = FALLBACK_MODEL;
-for (const m of [DEFAULT_MODEL, FALLBACK_MODEL]) {
+$('#defaultName').textContent = DEFAULT_MODEL;
+$('#accurateName').textContent = ACCURATE_MODEL;
+for (const m of [DEFAULT_MODEL, ACCURATE_MODEL]) {
   const o = document.createElement('option');
   o.value = m;
   $('#modelList').append(o);
@@ -657,14 +717,29 @@ $('#testKey').addEventListener('click', async () => {
   out.className = 'test-result';
   if (!key) { out.textContent = 'Bitte zuerst einen Schlüssel eingeben.'; out.classList.add('bad'); return; }
   out.textContent = 'Prüfe …';
+  const started = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60_000);
   try {
-    const res = await fetch(`${API_BASE}/models/${encodeURIComponent(getModel())}`, { headers: { 'x-goog-api-key': key } });
+    // Echte Mini-Anfrage: prüft Schlüssel, Modell UND ob das Gratis-Kontingent noch reicht
+    const res = await fetch(`${API_BASE}/models/${encodeURIComponent(getModel())}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Antworte nur mit: OK' }] }] }),
+      signal: ctrl.signal,
+    });
     if (!res.ok) throw errorFromHttp(res.status, await res.text());
-    out.textContent = '✓ Schlüssel und Modell funktionieren';
+    await res.json();
+    const s = ((Date.now() - started) / 1000).toFixed(1).replace('.', ',');
+    out.textContent = `✓ Funktioniert (Antwort in ${s} s)`;
     out.classList.add('ok');
   } catch (e) {
-    out.textContent = '✗ ' + (e instanceof AppError ? e.message : 'Keine Verbindung zu Gemini.');
+    out.textContent = '✗ ' + (e instanceof AppError ? e.message
+      : e?.name === 'AbortError' ? 'Gemini hat nach 60 Sekunden nicht geantwortet.'
+      : 'Keine Verbindung zu Gemini.');
     out.classList.add('bad');
+  } finally {
+    clearTimeout(timer);
   }
 });
 
@@ -688,7 +763,3 @@ if ('serviceWorker' in navigator) {
 }
 renderPhotos();
 showView(getKey() ? 'new' : 'settings');
-
-// Nur zum Testen ohne Gemini: window.__skriptorDemo(mode, result)
-window.__skriptorDemo = (mode, result) => openEntry({ id: 'demo', mode, date: new Date().toISOString(), result }, 'new');
-window.__skriptorPdf = async (entry) => buildPdf(await loadJsPdf(), entry);
