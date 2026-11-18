@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Skriptor</title>
+  <meta name="description" content="Fotografierte Texte in klar strukturierte Dialoge oder Lernskripte verwandeln.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17181b" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Skriptor">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="viewTitle">Neues Skript</h1>
+  </header>
+
+  <div id="installHint" class="banner" hidden>
+    <p>Tipp: In Safari auf <strong>Teilen</strong> und dann <strong>„Zum Home-Bildschirm"</strong> tippen. So bleiben App und Verlauf dauerhaft erhalten.</p>
+    <button type="button" class="icon-btn" id="installHintClose" aria-label="Hinweis schließen">✕</button>
+  </div>
+
+  <main>
+    <!-- NEU -->
+    <section id="view-new" class="view" aria-labelledby="viewTitle">
+      <fieldset class="segmented" aria-label="Modus">
+        <input type="radio" name="mode" id="mode-drehbuch" value="drehbuch">
+        <label for="mode-drehbuch"><span aria-hidden="true">💬</span> Dialog</label>
+        <input type="radio" name="mode" id="mode-lernskript" value="lernskript">
+        <label for="mode-lernskript"><span aria-hidden="true">📘</span> Lernskript</label>
+      </fieldset>
+      <p class="mode-desc" id="modeDesc"></p>
+
+      <ol id="photos" class="photos" aria-label="Fotografierte Seiten"></ol>
+      <div id="photosEmpty" class="empty">
+        <div class="empty-icon" aria-hidden="true">📷</div>
+        <p>Fotografiere eine oder mehrere Seiten.<br>Sie werden zusammen zu einem Skript.</p>
+      </div>
+
+      <label class="btn btn-secondary btn-block" id="addPhotoBtn">
+        <input type="file" id="fileInput" accept="image/*" multiple hidden>
+        <span>＋ Foto hinzufügen</span>
+      </label>
+      <p class="hint" id="photoCount"></p>
+
+      <div id="keyMissing" class="card card-warn" hidden>
+        <p>Für die Umwandlung brauchst du einmalig einen kostenlosen Gemini-Schlüssel.</p>
+        <button type="button" class="btn btn-secondary" data-goto="settings">Zu den Einstellungen</button>
+      </div>
+
+      <div id="errorBox" class="card card-error" role="alert" hidden></div>
+
+      <button type="button" class="btn btn-primary btn-block" id="convertBtn" disabled>Umwandeln</button>
+    </section>
+
+    <!-- ERGEBNIS -->
+    <section id="view-result" class="view" hidden>
+      <div class="result-head">
+        <h2 id="resultTitle"></h2>
+        <p class="meta" id="resultMeta"></p>
+      </div>
+      <article id="scriptOut" class="script"></article>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" id="copyBtn">Kopieren</button>
+        <button type="button" class="btn btn-secondary" id="pdfBtn">PDF</button>
+        <button type="button" class="btn btn-primary" id="newBtn">Neues Skript</button>
+      </div>
+    </section>
+
+    <!-- VERLAUF -->
+    <section id="view-history" class="view" hidden>
+      <ul id="historyList" class="list"></ul>
+      <div id="historyEmpty" class="empty">
+        <div class="empty-icon" aria-hidden="true">🗂️</div>
+        <p>Noch keine Skripte.<br>Die letzten 20 werden hier gespeichert.</p>
+      </div>
+    </section>
+
+    <!-- EINSTELLUNGEN -->
+    <section id="view-settings" class="view" hidden>
+      <div class="card">
+        <label for="apiKey" class="field-label">Gemini-API-Schlüssel</label>
+        <div class="row">
+          <input type="password" id="apiKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…">
+          <button type="button" class="btn btn-secondary btn-small" id="toggleKey">Anzeigen</button>
+        </div>
+        <div class="row">
+          <button type="button" class="btn btn-secondary btn-small" id="testKey">Testen</button>
+          <span id="testResult" class="test-result" aria-live="polite"></span>
+        </div>
+        <details>
+          <summary>So bekommst du einen Schlüssel</summary>
+          <ol class="steps">
+            <li>Öffne <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> und melde dich mit einem Google-Konto an.</li>
+            <li>Tippe auf <strong>„API-Schlüssel erstellen"</strong>.</li>
+            <li>Kopiere den Schlüssel und füge ihn oben ein.</li>
+          </ol>
+          <p class="hint">Der Schlüssel wird nur auf diesem Gerät gespeichert.</p>
+        </details>
+      </div>
+
+      <div class="card">
+        <label for="model" class="field-label">Modell</label>
+        <div class="row">
+          <input type="text" id="model" list="modelList" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="button" class="btn btn-secondary btn-small" id="resetModel">Standard</button>
+        </div>
+        <datalist id="modelList"></datalist>
+        <p class="hint">Ist das Gratis-Tageslimit voll, hilft oft <code id="fallbackName"></code>. Es liest etwas ungenauer, erlaubt aber mehr Anfragen.</p>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Datenschutz</h2>
+        <p class="hint">Deine Fotos werden zur Umwandlung an Google Gemini geschickt. Im kostenlosen Zugang darf Google die Daten zur Verbesserung seiner Dienste verwenden. Fotografiere also keine vertraulichen Texte. Verlauf und Schlüssel bleiben nur auf diesem Gerät.</p>
+      </div>
+
+      <button type="button" class="btn btn-danger btn-block" id="clearHistory">Verlauf komplett löschen</button>
+    </section>
+  </main>
+
+  <div id="loading" class="overlay" hidden>
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="loadingText">Gemini liest …</p>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <nav class="tabbar" aria-label="Navigation">
+    <button type="button" data-tab="new" aria-current="page"><span aria-hidden="true">＋</span>Neu</button>
+    <button type="button" data-tab="history"><span aria-hidden="true">🗂️</span>Verlauf</button>
+    <button type="button" data-tab="settings"><span aria-hidden="true">⚙️</span>Einstellungen</button>
+  </nav>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
