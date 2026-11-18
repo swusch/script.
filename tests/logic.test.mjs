@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRequestBody, parseGeminiResponse, normalizeResult, errorFromHttp,
-  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError,
+  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError, cleanQuelle,
 } from '../logic.js';
 
 const wrap = (obj, finishReason = 'STOP') => ({
@@ -43,6 +43,23 @@ test('buildRequestBody hängt Bilder in Reihenfolge nach dem Prompt an', () => {
   assert.equal(parts[2].inlineData.data, 'BBB');
   assert.equal(body.generationConfig.responseMimeType, 'application/json');
   assert.throws(() => buildRequestBody('quatsch', []));
+});
+
+test('Buchtitel wird als eigener Hinweis vor den Bildern mitgeschickt', () => {
+  const img = [{ mimeType: 'image/jpeg', data: 'AAA' }];
+  const withQ = buildRequestBody('drehbuch', img, { quelle: '  Romeo   und „Julia“ ' }).contents[0].parts;
+  assert.equal(withQ.length, 3);
+  assert.ok(withQ[1].text.includes(`"Romeo und 'Julia'"`));
+  assert.ok(withQ[1].text.includes('nur Inhalte, die tatsächlich auf den Fotos stehen'));
+  assert.equal(withQ[2].inlineData.data, 'AAA');
+  assert.equal(buildRequestBody('drehbuch', img, { quelle: '   ' }).contents[0].parts.length, 2);
+  assert.equal(buildRequestBody('drehbuch', img).contents[0].parts.length, 2);
+  assert.equal(cleanQuelle('x'.repeat(500)).length, 150);
+});
+
+test('Text-Export nennt die Quelle, wenn vorhanden', () => {
+  const r = { ...parseGeminiResponse('lernskript', wrap(lernskript)), quelle: 'Biologie heute' };
+  assert.ok(toPlainText('lernskript', r).startsWith('PHOTOSYNTHESE\nAus: Biologie heute\n\n'));
 });
 
 test('Drehbuch: Sprecher groß, leere Zeilen raus, Dialog ohne Sprecher wird Regie', () => {

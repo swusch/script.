@@ -96,16 +96,34 @@ export class AppError extends Error {
   }
 }
 
+export const MAX_QUELLE_LEN = 150;
+
+/** Bereinigt den vom Nutzer eingegebenen Buch-/Werktitel. */
+export function cleanQuelle(q) {
+  return String(q ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUELLE_LEN);
+}
+
+/** Hinweis für Gemini, aus welchem Buch/Werk die Fotos stammen. */
+export function quelleHint(quelle) {
+  const q = cleanQuelle(quelle).replace(/["„“”]/g, "'");
+  if (!q) return '';
+  return `Zusatzinfo vom Nutzer: Die Fotos stammen aus dem Buch / Werk "${q}".
+Nutze dein Wissen über dieses Werk nur zur Einordnung: Figuren und Sprecher richtig erkennen und Namen korrekt und einheitlich schreiben, Fachbegriffe richtig zuordnen, unklare Stellen besser lesen.
+Übernimm aber nur Inhalte, die tatsächlich auf den Fotos stehen – ergänze nichts aus dem Werk, was dort nicht zu sehen ist.`;
+}
+
 /** images: [{ mimeType, data(base64 ohne Präfix) }] */
-export function buildRequestBody(mode, images) {
+export function buildRequestBody(mode, images, { quelle } = {}) {
   const m = MODES[mode];
   if (!m) throw new Error(`Unbekannter Modus: ${mode}`);
+  const hint = quelleHint(quelle);
   return {
     contents: [
       {
         role: 'user',
         parts: [
           { text: m.prompt },
+          ...(hint ? [{ text: hint }] : []),
           ...images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
         ],
       },
@@ -222,7 +240,9 @@ export function errorFromHttp(status, bodyText = '') {
 
 /** Text zum Kopieren in Notizen, WhatsApp, Word … */
 export function toPlainText(mode, r) {
-  const out = [r.titel.toUpperCase(), ''];
+  const out = [r.titel.toUpperCase()];
+  if (r.quelle) out.push(`Aus: ${r.quelle}`);
+  out.push('');
   if (mode === 'drehbuch') {
     r.szenen.forEach((s, i) => {
       if (i > 0) out.push('');

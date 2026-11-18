@@ -37,6 +37,15 @@
       </fieldset>
       <p class="mode-desc" id="modeDesc"></p>
 
+      <div class="source-field">
+        <label for="quelle" class="field-label">Buch / Werk <span class="optional">(optional)</span></label>
+        <div class="row">
+          <input type="text" id="quelle" maxlength="150" autocomplete="off" enterkeyhint="done" placeholder="z. B. Romeo und Julia">
+          <button type="button" class="icon-btn" id="quelleClear" aria-label="Buchtitel löschen" hidden>✕</button>
+        </div>
+        <p class="hint">Hilft Gemini, Figuren und Begriffe richtig zuzuordnen. Bleibt für die nächsten Fotos gespeichert.</p>
+      </div>
+
       <ol id="photos" class="photos" aria-label="Fotografierte Seiten"></ol>
       <div id="photosEmpty" class="empty">
         <div class="empty-icon" aria-hidden="true">📷</div>

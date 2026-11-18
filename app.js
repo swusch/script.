@@ -1,7 +1,7 @@
 import {
   MODES, MAX_PHOTOS, DEFAULT_MODEL, FALLBACK_MODEL, API_BASE, AppError,
   buildRequestBody, parseGeminiResponse, errorFromHttp, toPlainText,
-  sanitizeForPdf, addToHistory, pdfFileName, moveItem,
+  sanitizeForPdf, addToHistory, pdfFileName, moveItem, cleanQuelle,
 } from './logic.js';
 
 const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
@@ -94,6 +94,20 @@ document.querySelectorAll('input[name="mode"]').forEach((r) => {
   });
 });
 $('#modeDesc').textContent = MODE_DESC[state.mode];
+
+/* ---------- Buch / Werk ---------- */
+const quelleInput = $('#quelle');
+const syncQuelleClear = () => { $('#quelleClear').hidden = !quelleInput.value; };
+quelleInput.value = cleanQuelle(store.get('quelle', ''));
+syncQuelleClear();
+quelleInput.addEventListener('input', () => { store.set('quelle', quelleInput.value); syncQuelleClear(); });
+quelleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') quelleInput.blur(); });
+$('#quelleClear').addEventListener('click', () => {
+  quelleInput.value = '';
+  store.set('quelle', '');
+  syncQuelleClear();
+  quelleInput.focus();
+});
 
 /* ---------- Fotos ---------- */
 async function loadImage(file) {
@@ -204,8 +218,8 @@ function showError(msg) {
 function hideError() { $('#errorBox').hidden = true; }
 
 /* ---------- Gemini ---------- */
-async function callGemini(mode, photos, key, model) {
-  const body = JSON.stringify(buildRequestBody(mode, photos));
+async function callGemini(mode, photos, key, model, quelle) {
+  const body = JSON.stringify(buildRequestBody(mode, photos, { quelle }));
   for (let attempt = 0; ; attempt++) {
     try {
       const ctrl = new AbortController();
@@ -245,7 +259,9 @@ $('#convertBtn').addEventListener('click', async () => {
   $('#loadingText').textContent = `Gemini liest ${n === 1 ? 'die Seite' : n + ' Seiten'} …`;
   $('#loading').hidden = false;
   try {
-    const result = await callGemini(state.mode, state.photos, key, getModel());
+    const quelle = cleanQuelle(quelleInput.value);
+    const result = await callGemini(state.mode, state.photos, key, getModel(), quelle);
+    if (quelle) result.quelle = quelle;
     const entry = { id: crypto.randomUUID?.() ?? String(Date.now()), mode: state.mode, date: new Date().toISOString(), result };
     if (!store.set('history', addToHistory(store.get('history', []), entry))) {
       toast('Verlauf konnte nicht gespeichert werden (Speicher voll?).');
@@ -347,10 +363,13 @@ const fmtDate = (iso) => {
   } catch { return ''; }
 };
 
+const metaLine = (entry) =>
+  [MODES[entry.mode].label, entry.result.quelle, fmtDate(entry.date)].filter(Boolean).join(' · ');
+
 function openEntry(entry, tab) {
   state.current = entry;
   $('#resultTitle').textContent = entry.result.titel;
-  $('#resultMeta').textContent = `${MODES[entry.mode].label} · ${fmtDate(entry.date)}`;
+  $('#resultMeta').textContent = metaLine(entry);
   renderScript($('#scriptOut'), entry.mode, entry.result);
   showView('result', tab);
   loadJsPdf().catch(() => { /* wird beim Tippen auf PDF erneut versucht */ });
@@ -435,7 +454,8 @@ function buildPdf(JsPDF, entry) {
       }
       y += 2.4;
     };
-    block(r.titel, { font: F, size: 18, style: 'bold', gapAfter: 6 });
+    block(r.titel, { font: F, size: 18, style: 'bold', gapAfter: r.quelle ? 1 : 6 });
+    if (r.quelle) block(`Aus: ${r.quelle}`, { font: F, size: 11, color: 110, gapAfter: 6 });
     for (const s of r.szenen) {
       if (s.ueberschrift) {
         ensure(lh(12) + lh(11) * 2);
@@ -468,7 +488,8 @@ function buildPdf(JsPDF, entry) {
     }
   } else {
     const F = 'helvetica';
-    block(r.titel, { font: F, size: 18, style: 'bold', gapAfter: 6 });
+    block(r.titel, { font: F, size: 18, style: 'bold', gapAfter: r.quelle ? 1 : 6 });
+    if (r.quelle) block(`Aus: ${r.quelle}`, { font: F, size: 11, color: 110, gapAfter: 6 });
     for (const a of r.abschnitte) {
       if (a.ueberschrift) {
         ensure(lh(13) + lh(11) * 2);
@@ -554,7 +575,7 @@ function renderHistory() {
     const open = el('button', 'open');
     open.type = 'button';
     const txt = el('span', 'txt');
-    txt.append(el('span', 't', entry.result.titel), el('span', 'd', `${MODES[entry.mode].label} · ${fmtDate(entry.date)}`));
+    txt.append(el('span', 't', entry.result.titel), el('span', 'd', metaLine(entry)));
     open.append(el('span', 'ico', entry.mode === 'drehbuch' ? '💬' : '📘'), txt);
     open.addEventListener('click', () => openEntry(entry, 'history'));
     const del = el('button', 'icon-btn', '🗑');

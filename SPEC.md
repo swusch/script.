@@ -35,18 +35,19 @@ Unten gibt es eine Leiste mit drei Tabs: **Neu · Verlauf · Einstellungen**.
 
 ### 4.1 Neu (Startbildschirm)
 1. **Modus-Umschalter:** `Dialog | Lernskript`. Die letzte Wahl wird gemerkt.
-2. **„Foto hinzufügen"-Knopf:** Öffnet die iOS-Auswahl mit „Foto aufnehmen" oder „Fotomediathek". Man kann auch mehrere Bilder auf einmal aus der Mediathek wählen.
-3. **Vorschaubilder** der hinzugefügten Seiten, nummeriert in der Reihenfolge der Aufnahme.
+2. **Feld „Buch / Werk" (optional):** Hier kann man den Titel des Buchs oder Werks eintragen (max. 150 Zeichen). Er wird gespeichert und bleibt für die nächsten Fotos stehen (✕ zum Leeren). Gemini nutzt ihn zur Einordnung, also um Figuren zu erkennen, Namen richtig zu schreiben und Begriffe zuzuordnen. Übernommen wird aber nur Text, der auf den Fotos steht. Ergebnis, Verlauf, Kopier-Text und PDF zeigen „Aus: <Titel>".
+3. **„Foto hinzufügen"-Knopf:** Öffnet die iOS-Auswahl mit „Foto aufnehmen" oder „Fotomediathek". Man kann auch mehrere Bilder auf einmal aus der Mediathek wählen.
+4. **Vorschaubilder** der hinzugefügten Seiten, nummeriert in der Reihenfolge der Aufnahme.
    - Jedes Vorschaubild hat ein ✕ zum Entfernen.
    - Die Reihenfolge lässt sich mit Pfeilen ◀ ▶ ändern. Das ist auf dem Handy zuverlässiger als Ziehen.
    - Höchstens **10 Seiten** pro Skript.
-4. **„Umwandeln"-Knopf:** Ist nur aktiv, wenn mindestens 1 Foto da ist und ein Schlüssel hinterlegt ist.
-5. Während der Umwandlung erscheint eine Ladeanzeige („Gemini liest 3 Seiten …"). Fotos und Knöpfe sind dann gesperrt.
+5. **„Umwandeln"-Knopf:** Ist nur aktiv, wenn mindestens 1 Foto da ist und ein Schlüssel hinterlegt ist.
+6. Während der Umwandlung erscheint eine Ladeanzeige („Gemini liest 3 Seiten …"). Fotos und Knöpfe sind dann gesperrt.
 
 Fehlt der Schlüssel, erscheint statt „Umwandeln" ein Hinweis mit Link zu den Einstellungen.
 
 ### 4.2 Ergebnis
-- Titel (von Gemini vorgeschlagen), Modus und Datum
+- Titel (von Gemini vorgeschlagen), Modus, Buch/Werk (falls angegeben) und Datum
 - Das formatierte Skript (siehe Abschnitt 6)
 - Knöpfe: **Kopieren**, **PDF**, **Neues Skript**
 - Das Ergebnis landet automatisch im Verlauf.
