@@ -112,8 +112,17 @@ Nutze dein Wissen über dieses Werk nur zur Einordnung: Figuren und Sprecher ric
 Übernimm aber nur Inhalte, die tatsächlich auf den Fotos stehen – ergänze nichts aus dem Werk, was dort nicht zu sehen ist.`;
 }
 
+// Obergrenze für die Antwort: genug für 10 Seiten, stoppt aber eine Endlosschleife.
+export const MAX_OUTPUT_TOKENS = 20000;
+
+/** Gemini 3+ (und die *-latest-Aliasse) kennen thinkingLevel, ältere Modelle nicht. */
+export function supportsThinkingLevel(model) {
+  const m = String(model || '').replace(/^models\//, '');
+  return !/^gemini-(1|2)(\.|-)/.test(m);
+}
+
 /** images: [{ mimeType, data(base64 ohne Präfix) }] */
-export function buildRequestBody(mode, images, { quelle } = {}) {
+export function buildRequestBody(mode, images, { quelle, model, thinking = true } = {}) {
   const m = MODES[mode];
   if (!m) throw new Error(`Unbekannter Modus: ${mode}`);
   const hint = quelleHint(quelle);
@@ -131,7 +140,10 @@ export function buildRequestBody(mode, images, { quelle } = {}) {
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: m.schema,
-      temperature: 0.2,
+      // Keine Temperatur setzen: Google rät bei Gemini 3 von Werten unter 1.0 ab (Schleifengefahr).
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      // Abschreiben und Gliedern braucht wenig "Nachdenken" – spart viel Zeit.
+      ...(thinking && supportsThinkingLevel(model) ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
     },
   };
 }

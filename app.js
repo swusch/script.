@@ -218,36 +218,53 @@ function showError(msg) {
 function hideError() { $('#errorBox').hidden = true; }
 
 /* ---------- Gemini ---------- */
+let activeRequest = null; // { ctrl, cancelled }
+
 async function callGemini(mode, photos, key, model, quelle) {
-  const body = JSON.stringify(buildRequestBody(mode, photos, { quelle }));
-  for (let attempt = 0; ; attempt++) {
+  let thinking = true;
+  let retried = false;
+  for (;;) {
+    const body = JSON.stringify(buildRequestBody(mode, photos, { quelle, model, thinking }));
+    const req = { ctrl: new AbortController(), cancelled: false, timedOut: false };
+    activeRequest = req;
+    const timer = setTimeout(() => { req.timedOut = true; req.ctrl.abort(); }, REQUEST_TIMEOUT_MS);
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-      let res;
-      try {
-        res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-          body,
-          signal: ctrl.signal,
-        });
-      } finally {
-        clearTimeout(timer);
+      const res = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body,
+        signal: req.ctrl.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        // Modell kennt die Denkzeit-Einstellung nicht → einmal ohne sie wiederholen
+        if (res.status === 400 && thinking && /thinking/i.test(text)) { thinking = false; continue; }
+        throw errorFromHttp(res.status, text);
       }
-      if (!res.ok) throw errorFromHttp(res.status, await res.text());
       return parseGeminiResponse(mode, await res.json());
     } catch (e) {
       let err = e;
-      if (e?.name === 'AbortError') err = new AppError('timeout', 'Gemini hat zu lange gebraucht. Versuch es nochmal oder mit weniger Seiten.');
-      else if (!(e instanceof AppError)) {
+      if (e?.name === 'AbortError') {
+        err = req.cancelled
+          ? new AppError('cancelled', 'Abgebrochen.')
+          : new AppError('timeout', `Gemini hat nach ${Math.round(REQUEST_TIMEOUT_MS / 60000)} Minuten nicht geantwortet. Versuch es nochmal, mit weniger Seiten oder in den Einstellungen mit dem Modell „${FALLBACK_MODEL}". Lass die App währenddessen geöffnet – wenn das iPhone sperrt, bricht die Verbindung ab.`);
+      } else if (!(e instanceof AppError)) {
         err = new AppError('offline', navigator.onLine === false ? 'Keine Internetverbindung.' : 'Keine Verbindung zu Gemini. Bitte Internet prüfen und nochmal versuchen.');
       }
-      if (err.retryable && attempt === 0) continue;
+      if (err.retryable && !retried) { retried = true; continue; }
       throw err;
+    } finally {
+      clearTimeout(timer);
+      if (activeRequest === req) activeRequest = null;
     }
   }
 }
+
+$('#cancelBtn').addEventListener('click', () => {
+  if (!activeRequest) return;
+  activeRequest.cancelled = true;
+  activeRequest.ctrl.abort();
+});
 
 $('#convertBtn').addEventListener('click', async () => {
   const key = getKey();
@@ -257,6 +274,13 @@ $('#convertBtn').addEventListener('click', async () => {
   updateNewView();
   const n = state.photos.length;
   $('#loadingText').textContent = `Gemini liest ${n === 1 ? 'die Seite' : n + ' Seiten'} …`;
+  const started = Date.now();
+  const tick = () => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    $('#loadingTime').textContent = s < 20 ? `${s} s` : `${s} s – das kann bei vielen Seiten etwas dauern`;
+  };
+  tick();
+  const ticker = setInterval(tick, 1000);
   $('#loading').hidden = false;
   try {
     const quelle = cleanQuelle(quelleInput.value);
@@ -270,8 +294,10 @@ $('#convertBtn').addEventListener('click', async () => {
     renderPhotos();
     openEntry(entry, 'new');
   } catch (e) {
-    showError(e.message || 'Unbekannter Fehler.');
+    if (e?.code === 'cancelled') toast('Abgebrochen – die Fotos sind noch da.');
+    else showError(e.message || 'Unbekannter Fehler.');
   } finally {
+    clearInterval(ticker);
     state.busy = false;
     $('#loading').hidden = true;
     updateNewView();

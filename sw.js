@@ -1,5 +1,5 @@
 // Offline-Cache für die App-Oberfläche. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'skriptor-v3';
+const VERSION = 'skriptor-v4';
 const APP_FILES = [
   './',
   'index.html',

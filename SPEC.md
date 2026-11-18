@@ -42,7 +42,7 @@ Unten gibt es eine Leiste mit drei Tabs: **Neu · Verlauf · Einstellungen**.
    - Die Reihenfolge lässt sich mit Pfeilen ◀ ▶ ändern. Das ist auf dem Handy zuverlässiger als Ziehen.
    - Höchstens **10 Seiten** pro Skript.
 5. **„Umwandeln"-Knopf:** Ist nur aktiv, wenn mindestens 1 Foto da ist und ein Schlüssel hinterlegt ist.
-6. Während der Umwandlung erscheint eine Ladeanzeige („Gemini liest 3 Seiten …"). Fotos und Knöpfe sind dann gesperrt.
+6. Während der Umwandlung erscheint eine Ladeanzeige („Gemini liest 3 Seiten …") mit mitlaufenden Sekunden, dem Hinweis „Bitte die App geöffnet lassen" und einem **Abbrechen**-Knopf. Abbrechen behält die Fotos. Nach 2 Minuten ohne Antwort bricht die App selbst ab und erklärt, was man tun kann.
 
 Fehlt der Schlüssel, erscheint statt „Umwandeln" ein Hinweis mit Link zu den Einstellungen.
 
@@ -171,6 +171,7 @@ In allen Fehlerfällen bleiben die Fotos erhalten, damit man nicht neu fotografi
 - Optik: hell und dunkel automatisch nach iPhone-Einstellung, große Tippflächen, schlichtes Design
 - **Modell:** Standard ist `gemini-flash-latest` (ein Alias, den Google immer auf das aktuelle Flash-Modell zeigen lässt). Als Ausweichmodell gibt es `gemini-flash-lite-latest`, das laut Berichten deutlich mehr Gratis-Anfragen pro Tag erlaubt. Beim Fehler 429 schlägt die App dieses Modell vor.
 - Für die API-Anfragen wird der Schlüssel im Header `x-goog-api-key` geschickt, nicht in der URL.
+- **Gemini-Einstellungen:** Die Temperatur wird nicht gesetzt, weil Google bei Gemini 3 von Werten unter 1.0 abrät (Schleifengefahr). `maxOutputTokens` ist 20.000. Bei Gemini 3+ und den `*-latest`-Aliassen gilt `thinkingConfig.thinkingLevel = "low"`, weil Abschreiben und Gliedern kaum Denkzeit braucht. Lehnt ein Modell das ab (HTTP 400 mit „thinking"), wiederholt die App die Anfrage einmal ohne diese Einstellung.
 
 ### Projektstruktur
 ```

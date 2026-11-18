@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRequestBody, parseGeminiResponse, normalizeResult, errorFromHttp,
-  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError, cleanQuelle,
+  toPlainText, sanitizeForPdf, addToHistory, pdfFileName, moveItem, AppError, cleanQuelle, supportsThinkingLevel,
 } from '../logic.js';
 
 const wrap = (obj, finishReason = 'STOP') => ({
@@ -43,6 +43,18 @@ test('buildRequestBody hängt Bilder in Reihenfolge nach dem Prompt an', () => {
   assert.equal(parts[2].inlineData.data, 'BBB');
   assert.equal(body.generationConfig.responseMimeType, 'application/json');
   assert.throws(() => buildRequestBody('quatsch', []));
+});
+
+test('Keine niedrige Temperatur, Antwortlimit gesetzt, wenig Denkzeit nur bei passenden Modellen', () => {
+  const img = [{ mimeType: 'image/jpeg', data: 'AAA' }];
+  const cfg = (opts) => buildRequestBody('lernskript', img, opts).generationConfig;
+  assert.equal(cfg({ model: 'gemini-flash-latest' }).temperature, undefined);
+  assert.ok(cfg({ model: 'gemini-flash-latest' }).maxOutputTokens > 0);
+  assert.deepEqual(cfg({ model: 'gemini-flash-latest' }).thinkingConfig, { thinkingLevel: 'low' });
+  assert.deepEqual(cfg({ model: 'gemini-3.5-flash' }).thinkingConfig, { thinkingLevel: 'low' });
+  assert.equal(cfg({ model: 'gemini-2.5-flash' }).thinkingConfig, undefined);
+  assert.equal(cfg({ model: 'gemini-flash-latest', thinking: false }).thinkingConfig, undefined);
+  assert.equal(supportsThinkingLevel('models/gemini-1.5-pro'), false);
 });
 
 test('Buchtitel wird als eigener Hinweis vor den Bildern mitgeschickt', () => {
